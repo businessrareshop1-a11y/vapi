@@ -5232,87 +5232,116 @@ document.getElementById('sidebar-profile-link')?.addEventListener('click', (e) =
 
 <script type="module">
   import Vapi from "https://esm.sh/@vapi-ai/web";
+  // We need to import these to fetch fresh data manually
+  import { getDocs, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
   const VAPI_PUBLIC_KEY = "3b26f225-58e3-44ab-821e-c8997f7838fb"; 
   const ASSISTANT_ID = "e087d893-5b04-4902-8525-812e17eba9ca"; 
 
   let vapiInstance = null;
 
-  // 1. CREATE THE BUTTON USING JS (Guarantees visibility)
+  // 1. Create the Button
   function createButton() {
+      const existingBtn = document.getElementById("my-helper-btn");
+      if(existingBtn) existingBtn.remove(); 
+
       const btn = document.createElement("button");
       btn.id = "my-helper-btn"; 
       btn.innerHTML = `
         <div style="display:flex; align-items:center; gap:10px;">
             <span style="font-size: 24px;">📞</span> 
-            <span style="font-weight: bold;">RareShop Support</span>
+            <span style="font-weight: bold;">Call Sales</span>
         </div>
       `;
-      
-      // Force Styling (Bypasses all CSS conflicts)
       Object.assign(btn.style, {
-          position: "fixed",
-          bottom: "30px",
-          left: "30px", // Put on LEFT side to avoid conflicts
-          zIndex: "2147483647", // Max possible z-index
-          backgroundColor: "#ea580c", // Orange-600
-          color: "white",
-          padding: "15px 25px",
-          borderRadius: "50px",
-          border: "2px solid white",
-          boxShadow: "0 4px 15px rgba(0,0,0,0.3)",
-          cursor: "pointer",
-          fontSize: "16px",
-          fontFamily: "sans-serif",
-          transition: "all 0.3s ease",
-          display: "block" 
+          position: "fixed", bottom: "30px", left: "30px", zIndex: "2147483647",
+          backgroundColor: "#ea580c", color: "white", padding: "15px 25px",
+          borderRadius: "50px", border: "2px solid white", boxShadow: "0 4px 15px rgba(0,0,0,0.3)",
+          cursor: "pointer", transition: "all 0.3s ease", display: "block", fontFamily: "sans-serif"
       });
-
-      // Add Hover Effect
-      btn.onmouseover = () => btn.style.transform = "scale(1.05)";
-      btn.onmouseout = () => btn.style.transform = "scale(1)";
-
-      // Add Click Event
       btn.onclick = toggleVapiCall;
-
       document.body.appendChild(btn);
-      console.log("✅ Button injected into DOM successfully");
   }
 
-  // 2. DEFINE CALL LOGIC
-  function toggleVapiCall() {
+  // 2. FETCH LIVE DATA FROM FIREBASE
+  async function getFreshInventory() {
+      // Check if 'db' exists from your main script
+      if (typeof db === 'undefined') {
+          console.error("Firebase DB not found. Is your main script loaded?");
+          return "Error: Database connection missing.";
+      }
+
+      try {
+          // Fetch FRESH docs from Firestore
+          const querySnapshot = await getDocs(collection(db, "artifacts/1:431233428581:web:a8fdf075545e62b28f2a8c/public/data/products"));
+          
+          if (querySnapshot.empty) return "No products found in database.";
+
+          // Format the data for the AI
+          let inventoryText = "";
+          querySnapshot.forEach((doc) => {
+              const p = doc.data();
+              const price = p.discountPrice > 0 ? p.discountPrice : p.price;
+              const stockMsg = (p.stock && p.stock > 0) ? `In Stock (${p.stock} left)` : "OUT OF STOCK";
+              
+              inventoryText += `- ${p.name}: Rs.${price} [${stockMsg}]\n`;
+          });
+
+          return inventoryText;
+
+      } catch (error) {
+          console.error("Error fetching Firebase data:", error);
+          return "Error fetching inventory.";
+      }
+  }
+
+  // 3. Start Call with LIVE Data
+  async function toggleVapiCall() {
       const btn = document.getElementById("my-helper-btn");
-      
-      if (!vapiInstance) return alert("Agent is loading... please wait.");
+
+      if (!vapiInstance) return alert("Agent is loading...");
 
       if (btn.innerText.includes("End")) {
           vapiInstance.stop();
       } else {
-          vapiInstance.start(ASSISTANT_ID);
+          // UI Feedback
+          const originalText = btn.innerHTML;
+          btn.innerHTML = `<i class="ph ph-spinner animate-spin"></i> Getting Prices...`;
+          
+          // AWAIT the fresh data
+          const liveData = await getFreshInventory();
+          console.log("Live Firebase Data Sent to AI:", liveData);
+
+          // Start call with the fresh list
+          vapiInstance.start(ASSISTANT_ID, {
+              assistantOverrides: {
+                  variableValues: {
+                      inventory: liveData 
+                  }
+              }
+          });
+          
+          // Restore button text (Vapi events will handle the "End Call" state)
+          setTimeout(() => btn.innerHTML = originalText, 1000);
       }
   }
 
-  // 3. INITIALIZE VAPI
+  // 4. Initialize
   try {
       vapiInstance = new Vapi(VAPI_PUBLIC_KEY);
-      
-      // Create button immediately
       createButton();
 
-      // Handle Call Status Changes
       vapiInstance.on('call-start', () => {
           const btn = document.getElementById("my-helper-btn");
           btn.innerHTML = '<span style="font-size: 24px;">🔴</span> <b>End Call</b>';
-          btn.style.backgroundColor = "#dc2626"; // Red
+          btn.style.backgroundColor = "#dc2626"; 
       });
 
       vapiInstance.on('call-end', () => {
           const btn = document.getElementById("my-helper-btn");
-          btn.innerHTML = '<div style="display:flex; align-items:center; gap:10px;"><span style="font-size: 24px;">📞</span> <b>RareShop Support</b></div>';
-          btn.style.backgroundColor = "#ea580c"; // Orange
+          btn.innerHTML = '<div style="display:flex; align-items:center; gap:10px;"><span style="font-size: 24px;">📞</span> <b>Call Sales</b></div>';
+          btn.style.backgroundColor = "#ea580c"; 
       });
-
-      vapiInstance.on('error', (e) => console.error("Vapi Error:", e));
 
   } catch (e) {
       console.error("Vapi Init Error:", e);
